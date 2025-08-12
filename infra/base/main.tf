@@ -160,7 +160,7 @@ resource "random_password" "db_password" {
   special = true
 }
 
-# AWS Secrets Manager secret for RDS credentials
+# AWS Secrets Manager secret for RDS credentials (force-deleted previous version)
 resource "aws_secretsmanager_secret" "rds_credentials" {
   name = "webapp/rds/credentials"
   description = "RDS credentials for webapp database"
