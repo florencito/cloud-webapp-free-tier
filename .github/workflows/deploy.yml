@@ -68,17 +68,20 @@ jobs:
 
       - name: Build, Tag, and Push Docker image
         working-directory: ./app
-        env:
-          ECR_REPOSITORY_URL: ${{ needs.deploy-base-infrastructure.outputs.ecr_repository_url }}
         run: |
+          # Build ECR URL directly from known components
+          ECR_REPOSITORY_URL="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}"
+          
           # Echo variables for debugging
           echo "ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}"
           echo "ECR_REPOSITORY_URL: $ECR_REPOSITORY_URL"
+          echo "AWS_ACCOUNT_ID: ${{ env.AWS_ACCOUNT_ID }}"
+          echo "AWS_REGION: ${{ env.AWS_REGION }}"
           
           # Build image for AMD64 (ECS Fargate requirement)
           docker build --platform linux/amd64 -t ${{ env.ECR_REPOSITORY }} .
           
-          # Tag and push using full URL
+          # Tag and push using constructed URL
           docker tag ${{ env.ECR_REPOSITORY }}:latest "$ECR_REPOSITORY_URL:latest"
           docker push "$ECR_REPOSITORY_URL:latest"
 
