@@ -14,18 +14,7 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.webapp.repository_url
 }
 
-output "rds_endpoint" {
-  value = aws_db_instance.webapp.address
-}
-
-output "rds_db_name" {
-  value = aws_db_instance.webapp.db_name
-}
-
-output "rds_user" {
-  value = aws_db_instance.webapp.username
-}
-
-output "rds_password" {
-  value = aws_db_instance.webapp.password
+output "rds_secret_arn" {
+  value = aws_secretsmanager_secret.rds_credentials.arn
+  description = "ARN of the RDS credentials secret in AWS Secrets Manager"
 }

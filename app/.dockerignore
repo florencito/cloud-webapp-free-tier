@@ -9,6 +9,11 @@ README.md
 # Task definitions and configs
 task-definition-fixed.json
 
+# Environment files (security)
+.env
+.env.local
+.env.*.local
+
 # Python
 __pycache__
 *.pyc

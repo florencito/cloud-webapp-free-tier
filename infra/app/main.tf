@@ -4,9 +4,11 @@ provider "aws" {
 
 # Leer los outputs del módulo base
 data "terraform_remote_state" "base" {
-  backend = "local"
+  backend = "s3"
   config = {
-    path = "../base/terraform.tfstate"
+    bucket = "cloud-webapp-free-tier-terraform-state-e652a150fd6fe784"
+    key    = "base/terraform.tfstate"
+    region = "us-east-1"
   }
 }
 
@@ -38,6 +40,34 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_attach" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# IAM policy to allow access to Secrets Manager and CloudWatch Logs
+resource "aws_iam_role_policy" "ecs_secrets_policy" {
+  name = "ecs-secrets-policy"
+  role = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = data.terraform_remote_state.base.outputs.rds_secret_arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
 # Task Definition
 resource "aws_ecs_task_definition" "web" {
   family                   = "cloud-webapp-task"
@@ -54,6 +84,13 @@ resource "aws_ecs_task_definition" "web" {
       cpu       = 256
       memory    = 512
       essential = true
+      secrets = [
+        {
+          name      = "DB_CREDENTIALS"
+          valueFrom = data.terraform_remote_state.base.outputs.rds_secret_arn
+        }
+      ]
+
       portMappings = [
         {
           containerPort = 80

@@ -34,7 +34,9 @@ terraform apply -auto-approve
 
 # Get ECR URL from Terraform output
 ECR_URL=$(terraform output -raw ecr_repository_url)
+RDS_SECRET_ARN=$(terraform output -raw rds_secret_arn)
 echo -e "${GREEN}✅ Base infrastructure deployed. ECR URL: $ECR_URL${NC}"
+echo -e "${GREEN}🔐 RDS Secret ARN: $RDS_SECRET_ARN${NC}"
 
 # Step 2: Build and push Docker image
 echo -e "\n${YELLOW}🐳 Step 2: Building and pushing Docker image...${NC}"
@@ -87,8 +89,12 @@ echo "• Cluster: cloud-webapp-cluster"
 echo "• Service: cloud-webapp-service" 
 echo "• Image: $ECR_URL:$IMAGE_TAG"
 echo "• Region: $AWS_REGION"
+echo "• RDS Secret ARN: $RDS_SECRET_ARN"
 
 echo -e "\n${YELLOW}📊 View logs:${NC}"
 echo "aws logs tail /ecs/cloud-webapp-task --follow --region $AWS_REGION"
+
+echo -e "\n${YELLOW}🔍 Test database connection locally:${NC}"
+echo "python3 scripts/test-db-local.py $RDS_SECRET_ARN"
 
 echo -e "\n${GREEN}🎉 Deployment completed successfully!${NC}"

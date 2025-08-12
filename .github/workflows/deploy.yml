@@ -1,16 +1,56 @@
-name: CI/CD Deploy to AWS
+name: Deploy to AWS
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 361769574376
+  ECR_REPOSITORY: cloud-webapp
+
 jobs:
+  deploy-base-infrastructure:
+    runs-on: ubuntu-latest
+    outputs:
+      ecr_repository_url: ${{ steps.deploy_base.outputs.ecr_repository_url }}
+      rds_secret_arn: ${{ steps.deploy_base.outputs.rds_secret_arn }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::361769574376:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Deploy Base Infrastructure
+        id: deploy_base
+        working-directory: ./infra/base
+        run: |
+          terraform init
+          terraform plan
+          terraform apply -auto-approve
+          
+          # Get outputs for next job
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+          echo "rds_secret_arn=$(terraform output -raw rds_secret_arn)" >> $GITHUB_OUTPUT
+
   build-and-push-image:
+    needs: deploy-base-infrastructure
     runs-on: ubuntu-latest
 
     steps:
@@ -21,20 +61,25 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::361769574376:role/GitHubActionsDeployRole
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, Tag, and Push Docker image
         working-directory: ./app
+        env:
+          ECR_REPOSITORY_URL: ${{ needs.deploy-base-infrastructure.outputs.ecr_repository_url }}
         run: |
-          docker build -t cloud-webapp .
-          docker tag cloud-webapp:latest 361769574376.dkr.ecr.us-east-1.amazonaws.com/cloud-webapp:latest
-          docker push 361769574376.dkr.ecr.us-east-1.amazonaws.com/cloud-webapp:latest
+          # Build image for AMD64 (ECS Fargate requirement)
+          docker build --platform linux/amd64 -t ${{ env.ECR_REPOSITORY }} .
+          
+          # Tag and push
+          docker tag ${{ env.ECR_REPOSITORY }}:latest $ECR_REPOSITORY_URL:latest
+          docker push $ECR_REPOSITORY_URL:latest
 
-  deploy-infra:
-    needs: build-and-push-image
+  deploy-app-infrastructure:
+    needs: [deploy-base-infrastructure, build-and-push-image]
     runs-on: ubuntu-latest
 
     steps:
@@ -45,15 +90,69 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::361769574376:role/GitHubActionsDeployRole
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
-      - name: Terraform Init
-        working-directory: ./infra
-        run: terraform init
+      - name: Deploy App Infrastructure
+        working-directory: ./infra/app
+        run: |
+          terraform init
+          terraform plan
+          terraform apply -auto-approve
 
-      - name: Terraform Apply
-        working-directory: ./infra
-        run: terraform apply -auto-approve
+      - name: Wait for ECS Service to Stabilize
+        run: |
+          echo "⏳ Waiting for ECS service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster cloud-webapp-cluster \
+            --services cloud-webapp-service \
+            --region ${{ env.AWS_REGION }}
+          echo "✅ ECS service is stable"
+
+      - name: Get Application URL
+        id: get_url
+        run: |
+          # Get the public IP of the running task
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster cloud-webapp-cluster \
+            --service-name cloud-webapp-service \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskArns[0]' \
+            --output text)
+          
+          ENI_ID=$(aws ecs describe-tasks \
+            --cluster cloud-webapp-cluster \
+            --tasks $TASK_ARN \
+            --region ${{ env.AWS_REGION }} \
+            --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+            --output text)
+          
+          PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+            --network-interface-ids $ENI_ID \
+            --region ${{ env.AWS_REGION }} \
+            --query 'NetworkInterfaces[0].Association.PublicIp' \
+            --output text)
+          
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "🌐 Application URL: http://$PUBLIC_IP" >> $GITHUB_STEP_SUMMARY
+          echo "🔍 Database Check: http://$PUBLIC_IP/db-check" >> $GITHUB_STEP_SUMMARY
+
+      - name: Test Application
+        env:
+          PUBLIC_IP: ${{ steps.get_url.outputs.public_ip }}
+        run: |
+          echo "🧪 Testing application endpoints..."
+          
+          # Test main endpoint
+          echo "Testing main endpoint..."
+          curl -f http://$PUBLIC_IP/ || exit 1
+          
+          # Test database connection
+          echo "Testing database connection..."
+          curl -f http://$PUBLIC_IP/db-check || exit 1
+          
+          echo "✅ All tests passed!"

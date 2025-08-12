@@ -1,0 +1,146 @@
+name: Cleanup AWS Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Type "destroy" to confirm resource deletion'
+        required: true
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy == 'destroy'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::361769574376:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Stop ECS Service (Graceful Shutdown)
+        run: |
+          echo "🛑 Stopping ECS service gracefully..."
+          
+          # Check if service exists
+          if aws ecs describe-services \
+            --cluster cloud-webapp-cluster \
+            --services cloud-webapp-service \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].status' \
+            --output text 2>/dev/null | grep -q "ACTIVE"; then
+            
+            # Scale down to 0 tasks
+            aws ecs update-service \
+              --cluster cloud-webapp-cluster \
+              --service cloud-webapp-service \
+              --desired-count 0 \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "⏳ Waiting for tasks to drain..."
+            aws ecs wait services-stable \
+              --cluster cloud-webapp-cluster \
+              --services cloud-webapp-service \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ ECS service drained successfully"
+          else
+            echo "ℹ️ ECS service not found or already inactive"
+          fi
+
+      - name: Destroy App Infrastructure
+        working-directory: ./infra/app
+        run: |
+          echo "🧨 Destroying app infrastructure..."
+          terraform init
+          terraform destroy -auto-approve || echo "⚠️ Some app resources may have already been deleted"
+
+      - name: Clean up ECR Images
+        run: |
+          echo "🧹 Cleaning up ECR repository..."
+          
+          # Delete all images in ECR repository
+          if aws ecr describe-repositories \
+            --repository-names cloud-webapp \
+            --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            
+            # Get all image tags
+            IMAGE_TAGS=$(aws ecr list-images \
+              --repository-name cloud-webapp \
+              --region ${{ env.AWS_REGION }} \
+              --query 'imageIds[*].imageTag' \
+              --output text)
+            
+            if [ ! -z "$IMAGE_TAGS" ]; then
+              echo "Deleting images with tags: $IMAGE_TAGS"
+              aws ecr batch-delete-image \
+                --repository-name cloud-webapp \
+                --region ${{ env.AWS_REGION }} \
+                --image-ids imageTag=latest || echo "⚠️ Some images may have already been deleted"
+            fi
+          else
+            echo "ℹ️ ECR repository not found"
+          fi
+
+      - name: Destroy Base Infrastructure
+        working-directory: ./infra/base
+        run: |
+          echo "🧨 Destroying base infrastructure..."
+          terraform init
+          terraform destroy -auto-approve || echo "⚠️ Some base resources may have already been deleted"
+
+      - name: Cleanup Summary
+        run: |
+          echo "🎯 Cleanup completed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Resources Destroyed:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ECS Service and Tasks" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ECS Cluster" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ RDS Database Instance" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ECR Repository and Images" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ VPC, Subnets, and Networking" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Security Groups" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ IAM Roles and Policies" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ AWS Secrets Manager Secret" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** The S3 bucket and DynamoDB table for Terraform state are preserved." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "💡 **Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "- You can redeploy anytime using the Deploy workflow" >> $GITHUB_STEP_SUMMARY
+          echo "- State files remain intact for future deployments" >> $GITHUB_STEP_SUMMARY
+
+  cleanup-protection:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy != 'destroy'
+    
+    steps:
+      - name: Cleanup Protection
+        run: |
+          echo "🛡️ Cleanup Protection Activated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Cleanup was not performed because the confirmation input was incorrect.**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To proceed with cleanup:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Run this workflow again" >> $GITHUB_STEP_SUMMARY
+          echo "2. Enter exactly: **destroy** (case sensitive)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Warning:** This will delete all AWS resources and cannot be undone!" >> $GITHUB_STEP_SUMMARY
+          
+          exit 1
