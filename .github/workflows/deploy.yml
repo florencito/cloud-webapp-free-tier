@@ -71,12 +71,16 @@ jobs:
         env:
           ECR_REPOSITORY_URL: ${{ needs.deploy-base-infrastructure.outputs.ecr_repository_url }}
         run: |
+          # Echo variables for debugging
+          echo "ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}"
+          echo "ECR_REPOSITORY_URL: $ECR_REPOSITORY_URL"
+          
           # Build image for AMD64 (ECS Fargate requirement)
           docker build --platform linux/amd64 -t ${{ env.ECR_REPOSITORY }} .
           
-          # Tag and push
-          docker tag ${{ env.ECR_REPOSITORY }}:latest $ECR_REPOSITORY_URL:latest
-          docker push $ECR_REPOSITORY_URL:latest
+          # Tag and push using full URL
+          docker tag ${{ env.ECR_REPOSITORY }}:latest "$ECR_REPOSITORY_URL:latest"
+          docker push "$ECR_REPOSITORY_URL:latest"
 
   deploy-app-infrastructure:
     needs: [deploy-base-infrastructure, build-and-push-image]
