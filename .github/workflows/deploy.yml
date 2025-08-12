@@ -1,0 +1,59 @@
+name: CI/CD Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::361769574376:role/GitHubActionsDeployRole
+          aws-region: us-east-1
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Docker image
+        working-directory: ./app
+        run: |
+          docker build -t cloud-webapp .
+          docker tag cloud-webapp:latest 361769574376.dkr.ecr.us-east-1.amazonaws.com/cloud-webapp:latest
+          docker push 361769574376.dkr.ecr.us-east-1.amazonaws.com/cloud-webapp:latest
+
+  deploy-infra:
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::361769574376:role/GitHubActionsDeployRole
+          aws-region: us-east-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: ./infra
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: ./infra
+        run: terraform apply -auto-approve

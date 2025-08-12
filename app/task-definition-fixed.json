@@ -1,0 +1,33 @@
+{
+  "family": "cloud-webapp-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::361769574376:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "cloud-webapp",
+      "image": "361769574376.dkr.ecr.us-east-1.amazonaws.com/cloud-webapp:v1-amd64",
+      "cpu": 256,
+      "memory": 512,
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "protocol": "tcp"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/cloud-webapp-task",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      },
+      "environment": []
+    }
+  ]
+}
