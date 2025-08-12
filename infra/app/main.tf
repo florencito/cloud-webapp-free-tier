@@ -6,7 +6,7 @@ provider "aws" {
 data "terraform_remote_state" "base" {
   backend = "s3"
   config = {
-    bucket = "cloud-webapp-free-tier-terraform-state-e652a150fd6fe784"
+    bucket = "cloud-webapp-free-tier-terraform-state-254eff5ef13ce623"
     key    = "base/terraform.tfstate"
     region = "us-east-1"
   }
