@@ -99,6 +99,26 @@ jobs:
             echo "ℹ️ ECR repository not found"
           fi
 
+      - name: Force Delete Secrets Manager Secret
+        run: |
+          echo "🗑️ Force deleting Secrets Manager secret..."
+          
+          # Force delete the secret to avoid 30-day recovery window issues
+          if aws secretsmanager describe-secret \
+            --secret-id webapp/rds/credentials \
+            --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            
+            echo "Found secret, force deleting..."
+            aws secretsmanager delete-secret \
+              --secret-id webapp/rds/credentials \
+              --force-delete-without-recovery \
+              --region ${{ env.AWS_REGION }} || echo "⚠️ Secret may have already been deleted"
+            
+            echo "✅ Secret force deleted successfully"
+          else
+            echo "ℹ️ Secret not found or already deleted"
+          fi
+
       - name: Destroy Base Infrastructure
         working-directory: ./infra/base
         run: |
